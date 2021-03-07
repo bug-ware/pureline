@@ -1,0 +1,142 @@
+#!/bin/env bash
+
+# config_segment
+
+# Set default symbols if not already defined in config
+# Defaults should be standard symbols.
+#[[ -z ${PL_SYMBOLS[config_branch]} ]] && PL_SYMBOLS[config_branch]="╬" 
+[[ -z ${PL_SYMBOLS[config_branch]} ]] && PL_SYMBOLS[config_branch]="." 
+[[ -z ${PL_SYMBOLS[config_untracked]} ]] && PL_SYMBOLS[config_untracked]="?"
+[[ -z ${PL_SYMBOLS[config_stash]} ]] && PL_SYMBOLS[config_stash]="§"
+[[ -z ${PL_SYMBOLS[config_ahead]} ]] && PL_SYMBOLS[config_ahead]="↑"
+[[ -z ${PL_SYMBOLS[config_behind]} ]] && PL_SYMBOLS[config_behind]="↓"
+[[ -z ${PL_SYMBOLS[config_modified]} ]] && PL_SYMBOLS[config_modified]="+"
+[[ -z ${PL_SYMBOLS[config_staged]} ]] && PL_SYMBOLS[config_staged]="•"
+[[ -z ${PL_SYMBOLS[config_conflicts]} ]] && PL_SYMBOLS[config_conflicts]="!"
+
+# -----------------------------------------------------------------------------
+# append to prompt: config branch with indictors for;
+#     number of; modified files, staged files and conflicts
+# arg: $1 foreground color
+# arg; $2 background color
+# option variables;
+#   PL_CONFIG_STASH: true/false
+#   PL_CONFIG_AHEAD: true/false
+#   PL_CONFIG_STAGED: true/false
+#   PL_CONFIG_CONFLICTS: true/false
+#   PL_CONFIG_MODIFIED: true/false
+#   PL_CONFIG_UNTRACKED: true/false
+#   PL_CONFIG_HIDE_ON_CLEAR: true/false
+function config_segment {
+    local config_branch
+    # alias config >/dev/null 2>&1 || return;  ## return if no config alias
+    local ac=$(alias config 2>/dev/null) || return;  ## return if no config alias
+    local re=work-tree="[\"']?([^\"']*)[\"']?"
+    # echo $ac
+    # echo $re
+    [[ $ac =~ $re ]]
+    local config_workdir=${BASH_REMATCH[1]}
+    # echo $config_workdir
+
+    config_branch=$(config rev-parse --abbrev-ref HEAD 2> /dev/null)
+    
+    [[ -z $config_branch ]] && return;  ## return early if not a config branch
+
+    local bg_color="$1"
+    local fg_color="$2"
+    #local content="${PL_SYMBOLS[config_branch]} $config_branch"
+
+    local content=""
+    local short="${PL_SYMBOLS[config_branch]}"
+    local long="${PL_SYMBOLS[config_branch]} $config_branch"
+
+    if [[ "$PWD" == "$config_workdir" ]]; then
+            content="$long"
+    else
+        if [[ "$PWD" == "$HOME" ]]; then
+            if [[ "$config_branch" != "$HOSTNAME" ]]; then
+                content="$long"
+            else
+                content="$short"
+            fi
+        else
+            content="$short"
+        fi
+    fi
+
+    if [ "$PL_CONFIG_STASH" = true ]; then
+        local number_stash
+        number_stash="$(config stash list 2>/dev/null | grep -F -v -c 'fatal:' | tr -d '[:space:]')"
+        if [ ! "$number_stash" -eq 0 ]; then
+            content+=" ${PL_SYMBOLS[soft_separator]} ${PL_SYMBOLS[config_stash]}$number_stash"
+        fi
+    fi
+
+    if [ "$PL_CONFIG_AHEAD" = true ]; then
+        local number_behind_ahead
+        number_behind_ahead="$(config rev-list --count --left-right '@{upstream}...HEAD' 2>/dev/null)"
+        local number_ahead="${number_behind_ahead#*	}"
+        local number_behind="${number_behind_ahead%	*}"
+        if [ ! "0$number_ahead" -eq 0 ] || [ ! "0$number_behind" -eq 0 ]; then
+            if [ ! "$number_ahead" -eq 0 ]; then
+                content+=" ${PL_SYMBOLS[soft_separator]} ${PL_SYMBOLS[config_ahead]}$number_ahead"
+            fi
+            if [ ! "$number_behind" -eq 0 ]; then
+                content+=" ${PL_SYMBOLS[soft_separator]} ${PL_SYMBOLS[config_behind]}$number_behind"
+            fi
+        fi
+    fi
+
+    if [ "$PL_CONFIG_STAGED" = true ]; then
+        local number_staged
+        number_staged="$(config diff --staged --name-only --diff-filter=AM 2> /dev/null | wc -l | tr -d '[:space:]')"
+        if [ ! "$number_staged" -eq "0" ]; then
+            content+=" ${PL_SYMBOLS[soft_separator]} ${PL_SYMBOLS[config_staged]}$number_staged"
+        fi
+    fi
+
+    if [ "$PL_CONFIG_CONFLICTS" = true ]; then
+        local number_conflicts
+        number_conflicts="$(config diff --name-only --diff-filter=U 2> /dev/null | wc -l | tr -d '[:space:]')"
+        if [ ! "$number_conflicts" -eq "0" ]; then
+            content+=" ${PL_SYMBOLS[soft_separator]} ${PL_SYMBOLS[config_conflicts]}$number_conflicts"
+        fi
+    fi
+
+    if [ "$PL_CONFIG_MODIFIED" = true ]; then
+        local number_modified
+        number_modified="$(config diff --name-only --diff-filter=M 2> /dev/null | wc -l | tr -d '[:space:]')"
+        if [ ! "$number_modified" -eq "0" ]; then
+            content+=" ${PL_SYMBOLS[soft_separator]} ${PL_SYMBOLS[config_modified]}$number_modified"
+        fi
+    fi
+
+    if [ "$PL_CONFIG_UNTRACKED" = true ]; then
+        local number_untracked
+        number_untracked="$(config ls-files --other --exclude-standard 2> /dev/null | wc -l | tr -d '[:space:]')"
+        if [ ! "$number_untracked" -eq "0" ]; then
+            content+=" ${PL_SYMBOLS[soft_separator]} ${PL_SYMBOLS[config_untracked]}$number_untracked"
+        fi
+    fi
+
+    if [ -n "$(config status --porcelain 2> /dev/null)" ]; then
+        if [ -n "$PL_CONFIG_DIRTY_FG" ]; then
+            fg_color="$PL_CONFIG_DIRTY_FG"
+        fi
+        if [ -n "$PL_CONFIG_DIRTY_BG" ]; then
+            bg_color="$PL_CONFIG_DIRTY_BG"
+        fi
+    fi
+
+    if [ "$PL_CONFIG_HIDE_ON_CLEAR" = true ]; then
+        if [[ "$content" == "$short" ]]; then
+            content=""
+        fi
+    fi
+
+    if [[ ! -z "$content" ]]; then
+        PS1+="$(segment_end "$fg_color" "$bg_color")"
+        PS1+="$(segment_content "$fg_color" "$bg_color" " $content ")"
+        __last_color="$bg_color"
+    fi
+}
